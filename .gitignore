@@ -14,6 +14,9 @@ storageState*.json
 screenshots/
 videos/
 probe/
+# repl.js shot() output. Unredacted by design -- it is an exploration aid, and safeShot is
+# the thing that redacts. That makes these MORE sensitive than screenshots/, not less.
+repl-shots/
 bench-results.json
 FAILURE-*.json
 

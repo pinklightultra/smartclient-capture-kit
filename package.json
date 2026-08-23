@@ -9,6 +9,7 @@
   "scripts": {
     "smoke": "node scripts/smoke-test.js",
     "capture": "node run-modules.js",
+    "repl": "node repl.js",
     "setup": "node setup.js"
   },
   "dependencies": {

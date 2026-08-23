@@ -79,11 +79,52 @@ node run-modules.js --env staging --modules login,admin
 node runner.js --url https://staging.example.com --script scripts/example-screens.js
 node scripts/probe-isc-state.js --env staging           # what is actually on screen
 node scripts/bench-interaction.js --env staging         # re-measure click strategies
+node repl.js --env staging                              # one live session, many attempts
+node watch.js -- node run-modules.js --env staging --modules login
 ```
 
 Prefer `--env` over `--url`, and prefer `.env` or `CAPTURE_USER`/`CAPTURE_PASS` over
 `--user`/`--pass`. Arguments are visible in the process list to every other user on the
 machine; the environment name keeps the hostname out of your shell history.
+
+### repl.js, for the part that takes the longest
+
+Writing a selector or a navigation path takes ten or twenty attempts, and a cold launch plus
+a login costs 15-20 seconds each time. `repl.js` holds one authenticated context open so you
+pay that once:
+
+```bash
+CAPTURE_READONLY=1 node repl.js --env staging
+capture> await nav.goto(page, 'Admin > Users')
+capture> reload('./lib/nav')          # after editing lib/nav.js
+capture> await shot('users')          # ./repl-shots/users.png
+capture> await relogin()              # cookies went stale; rebinds page and context
+```
+
+`page`, `context`, `browser`, your libs, and `reload`/`shot`/`relogin` are preloaded.
+Credentials are optional only when a saved session exists for that host, since resuming one
+never touches the login form.
+
+Two things worth knowing. `shot()` is **not** `safeShot`: it writes an unredacted picture of a
+live application, which is correct for looking at what you just did and wrong for anything you
+keep, so `repl-shots/` is gitignored. And `relogin()` closes the old context and rebinds `page`,
+rather than only re-priming the saved state, because re-priming alone writes fresh cookies to
+disk while the browser in front of you stays logged out.
+
+### watch.js, for a run that fails in the middle
+
+`watch.js` wraps a capture, watches for `FAILURE-*.json`, and hands each one to the CLI
+configured under `agentHandoff`. The wrapped command keeps its own stdout.
+
+```bash
+node watch.js -- node run-modules.js --env staging --modules login,home,admin
+```
+
+It does not verify a fix. It collects an agent's diagnosis and says so; nothing here re-runs
+the failed beat or confirms anything was repaired. `--rerun` lets the agent drive its own
+browser, which is off by default because your capture session may still be open against the
+same environment. The agent gets write access to the repo through whatever CLI you configured,
+and nothing gates or rolls back an edit, so read the diff.
 
 ## Configuration
 
