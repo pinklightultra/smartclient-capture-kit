@@ -11,6 +11,8 @@
  * - safeShot() writes NO FILE when a configured column is on screen but uncoverable
  * - lib/diff.js measures a known change exactly, pads instead of scaling, and THROWS
  *   on an unreadable image rather than reporting it as unchanged
+ * - lib/annotate.js draws where it was asked to, keeps a callout on the canvas instead of
+ *   clipping it away, and refuses geometry that falls outside the image
  *
  * No application environment or credentials are used. Everything runs against a
  * synthetic page built by setContent below, so this is safe to run anywhere.
@@ -157,8 +159,165 @@ async function diffChecks() {
   }
 }
 
+/**
+ * lib/annotate.js checks. Also browser-free, so they run alongside the diff checks.
+ *
+ * Every assertion here is about WHERE THE INK LANDED, measured by differencing the output
+ * against the un-annotated base. A mark drawn off-canvas is clipped silently by both SVG and
+ * sharp, so "the file was written and it is the right size" proves nothing at all: the bug
+ * this module was extracted to fix produced a perfectly valid PNG with the callout missing.
+ */
+async function annotateChecks() {
+  const sharp = require('sharp');
+  const {
+    annotate, describe, parseCallout, parseRect, estimateTextWidth, AnnotateError,
+  } = require('../lib/annotate');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'capture-kit-annotate-'));
+  const p = (n) => path.join(dir, n);
+  const W = 400, H = 300;
+
+  // Bounding box and count of pixels that differ between two same-size images.
+  const inkBox = async (baseFile, outFile) => {
+    const load = async (f) => {
+      const { data, info } = await sharp(f).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      return { data, w: info.width, h: info.height };
+    };
+    const a = await load(baseFile), b = await load(outFile);
+    assert.equal(`${a.w}x${a.h}`, `${b.w}x${b.h}`, 'annotate changed the image dimensions');
+    let n = 0, x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (let y = 0; y < a.h; y++) {
+      for (let x = 0; x < a.w; x++) {
+        const i = (y * a.w + x) * 4;
+        if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] || a.data[i + 2] !== b.data[i + 2]) {
+          n++;
+          if (x < x0) x0 = x;
+          if (y < y0) y0 = y;
+          if (x > x1) x1 = x;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+    return { n, x0, y0, x1, y1 };
+  };
+
+  try {
+    // A detailed base, not a flat colour: blurring flat colour is a no-op, so a flat fixture
+    // would let a focus blur that does nothing at all pass the focus check below.
+    const buf = Buffer.alloc(W * H * 4);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const on = ((x >> 2) + (y >> 2)) % 2 === 0;
+        buf[i] = on ? 30 : 230;
+        buf[i + 1] = on ? 60 : 210;
+        buf[i + 2] = on ? 200 : 40;
+        buf[i + 3] = 255;
+      }
+    }
+    await sharp(buf, { raw: { width: W, height: H, channels: 4 } }).png().toFile(p('base.png'));
+
+    // 1. describe() reports the frame the coordinates are measured against, which is the
+    //    cropped one. Getting this backwards silently shifts every mark by the crop offset.
+    const whole = await describe(p('base.png'));
+    assert.deepEqual([whole.width, whole.height, whole.cropped], [W, H, false]);
+    const cropped = await describe(p('base.png'), parseRect('10,20,100,80'));
+    assert.deepEqual([cropped.width, cropped.height, cropped.cropped], [100, 80, true]);
+    assert.deepEqual([cropped.sourceWidth, cropped.sourceHeight], [W, H]);
+
+    // 2. A highlight lands on the rectangle it was given. The stroke is centred on the path,
+    //    so a 3px stroke reaches ~1.5px outside the box; 3px of slack absorbs antialiasing
+    //    without absorbing a mark drawn somewhere else entirely.
+    const box = { x: 40, y: 50, width: 120, height: 30 };
+    await annotate(p('base.png'), p('hl.png'), { highlights: [box] });
+    const hl = await inkBox(p('base.png'), p('hl.png'));
+    assert.ok(Math.abs(hl.x0 - box.x) <= 3 && Math.abs(hl.y0 - box.y) <= 3,
+      `highlight ink starts at ${hl.x0},${hl.y0}, expected near ${box.x},${box.y}`);
+    assert.ok(Math.abs(hl.x1 - (box.x + box.width)) <= 3 && Math.abs(hl.y1 - (box.y + box.height)) <= 3,
+      `highlight ink ends at ${hl.x1},${hl.y1}, expected near ${box.x + box.width},${box.y + box.height}`);
+
+    // 3. THE CALLOUT FLIP. The version this came from always placed the bubble above the
+    //    point, so a callout on anything in the top ~45px was drawn at a negative y and
+    //    clipped to a sliver. Compare a callout with room above against the same text with
+    //    none: the flipped one must sit BELOW its point and must contain essentially all of
+    //    the same ink. Restore the always-above placement and the count assertion fails,
+    //    which is the only reason to believe it is testing anything.
+    const text = 'Click Assign';
+    await annotate(p('base.png'), p('below.png'), { callouts: [{ x: 200, y: 200, text }] });
+    await annotate(p('base.png'), p('flipped.png'), { callouts: [{ x: 200, y: 10, text }] });
+    const roomy = await inkBox(p('base.png'), p('below.png'));
+    const tight = await inkBox(p('base.png'), p('flipped.png'));
+    assert.ok(roomy.y1 <= 201 && roomy.y0 < 200,
+      `with room above, the bubble should sit above y=200; ink spans y ${roomy.y0}..${roomy.y1}`);
+    assert.ok(tight.y1 > 30,
+      `with no room above, the bubble should flip below y=10; ink only reaches y ${tight.y1}`);
+    assert.ok(tight.n >= roomy.n * 0.9,
+      `the flipped callout drew ${tight.n} pixels against ${roomy.n} with room above, so most of it was clipped`);
+
+    // 4. Horizontal clamping, same failure mode sideways. A bubble centred on a point near
+    //    an edge hangs off the canvas and loses that half.
+    await annotate(p('base.png'), p('left.png'), { callouts: [{ x: 2, y: 200, text }] });
+    await annotate(p('base.png'), p('right.png'), { callouts: [{ x: W - 2, y: 200, text }] });
+    const left = await inkBox(p('base.png'), p('left.png'));
+    const right = await inkBox(p('base.png'), p('right.png'));
+    assert.ok(left.x0 >= 0 && left.x1 <= W - 1, `left-edge callout ink spans x ${left.x0}..${left.x1}`);
+    assert.ok(right.x0 >= 0 && right.x1 <= W - 1, `right-edge callout ink spans x ${right.x0}..${right.x1}`);
+    assert.ok(left.n >= roomy.n * 0.85 && right.n >= roomy.n * 0.85,
+      `edge callouts drew ${left.n} and ${right.n} pixels against ${roomy.n} centred`);
+
+    // 5. Geometry outside the image is refused rather than clipped. Named coordinates in the
+    //    message, because "it didn't work" is not a diagnosis.
+    for (const [what, ops] of [
+      ['highlight past the right edge', { highlights: [{ x: 350, y: 10, width: 100, height: 10 }] }],
+      ['highlight at a negative y', { highlights: [{ x: 10, y: -5, width: 10, height: 10 }] }],
+      ['arrow ending off-canvas', { arrows: [{ x1: 10, y1: 10, x2: W + 1, y2: 10 }] }],
+      ['callout anchored off-canvas', { callouts: [{ x: 10, y: H + 1, text: 'x' }] }],
+      ['focus box larger than the image', { focus: { x: 0, y: 0, width: W + 10, height: H } }],
+      ['crop larger than the image', { crop: { x: 0, y: 0, width: W, height: H + 1 } }],
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(() => annotate(p('base.png'), p('never.png'), ops),
+        (e) => e instanceof AnnotateError, `${what} did not throw AnnotateError`);
+    }
+    assert.ok(!fs.existsSync(p('never.png')), 'a rejected annotation still wrote a file');
+
+    // 6. Refusing to overwrite the source. There is no un-annotate, and the capture is the
+    //    only copy of what the application actually showed.
+    await assert.rejects(() => annotate(p('base.png'), p('base.png'), { highlights: [box] }),
+      (e) => e instanceof AnnotateError, 'annotating over the source image was allowed');
+
+    // 7. Focus blur keeps the focus region byte-identical. Blurring the frame and pasting the
+    //    region back must not bleed into it; anything above 0 here means it did.
+    const focus = { x: 100, y: 80, width: 150, height: 120 };
+    await annotate(p('base.png'), p('focus.png'), { focus });
+    const region = { left: focus.x, top: focus.y, width: focus.width, height: focus.height };
+    const before = await sharp(p('base.png')).extract(region).raw().toBuffer();
+    const after = await sharp(p('focus.png')).extract(region).raw().toBuffer();
+    assert.ok(before.equals(after), 'the focus region was altered by the surrounding blur');
+    const blurred = await inkBox(p('base.png'), p('focus.png'));
+    assert.ok(blurred.n > W * H * 0.5, `focus blur changed only ${blurred.n} pixels, so it barely blurred anything`);
+
+    // 8. Callout text may contain commas; only the first two fields are coordinates.
+    assert.deepEqual(parseCallout('12,34,Save, then close'), { x: 12, y: 34, text: 'Save, then close' });
+
+    // 9. The width estimate is per-character, not a flat multiplier. A flat estimate is what
+    //    this replaced and it is wrong by ~3x at both extremes.
+    assert.ok(estimateTextWidth('WWWW', 14) > estimateTextWidth('iiii', 14) * 2,
+      'the text width estimate does not distinguish wide characters from narrow ones');
+    assert.ok(estimateTextWidth('Assign', 28) > estimateTextWidth('Assign', 14) * 1.8,
+      'the text width estimate does not scale with font size');
+
+    console.log('PASS annotate draws a highlight on the rectangle it was given');
+    console.log('PASS annotate flips a callout below its point instead of clipping it off-canvas');
+    console.log('PASS annotate refuses geometry outside the image and writes no file');
+    console.log('PASS annotate focus blur leaves the focus region byte-identical');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await diffChecks();
+  await annotateChecks();
   const port = await getFreePort();
   const output = path.join(os.tmpdir(), `capture-kit-smoke-${process.pid}.png`);
   // safeShot() takes a directory, not a path, so it gets its own scratch dir under the OS

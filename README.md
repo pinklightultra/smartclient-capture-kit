@@ -82,6 +82,7 @@ node scripts/bench-interaction.js --env staging         # re-measure click strat
 node repl.js --env staging                              # one live session, many attempts
 node watch.js -- node run-modules.js --env staging --modules login
 node diff-runs.js --before ./shots/4.2 --after ./shots/4.3   # what changed between runs
+node annotate.js --in shot.png --out doc.png --highlight 120,200,300,48   # crop and mark up
 ```
 
 Prefer `--env` over `--url`, and prefer `.env` or `CAPTURE_USER`/`CAPTURE_PASS` over
@@ -164,6 +165,61 @@ Exit codes are `0` for no changes, `3` for changes found, and `1` only when the 
 measure what it claims to have measured: a missing directory, a bad argument, or any failed
 comparison. A wrapper script should break on `1`, not on `3`.
 
+### annotate.js, for the crop-and-mark-up pass
+
+A capture is rarely the thing that ships. What ships is that capture cropped to the relevant
+panel, with a box around the control and a numbered bubble beside it:
+
+```bash
+node annotate.js --in screenshots/staging/users.png --out doc/users.png \
+  --crop 0,56,1440,844 --highlight 120,200,300,48 --callout '270,190,1'
+```
+
+`--highlight`, `--arrow` and `--callout` repeat. Marks draw in that order, boxes first and
+callouts on top. Colours, stroke width and font size come from the `annotate` block of
+`capture.config.json`, with `--accent` and `--font-size` as per-run overrides.
+
+**Every coordinate is post-crop.** `--crop` is applied first and everything else is measured
+against the cropped frame, because the alternative — measuring against the original and having
+the crop shift your boxes — is a mistake you find by looking at the output. `--describe`
+prints the frame you are working in and writes nothing:
+
+```
+$ node annotate.js --in screenshots/staging/users.png --crop 0,56,1440,844 --describe
+users.png is 1440x900
+after --crop you are working in 1440x844, origin at the crop's top-left
+```
+
+`--focus x,y,w,h` blurs everything outside a box to direct the eye. **It is not redaction.**
+Redaction happens in `lib/redact.js` before the shutter; a blur applied afterwards is a
+post-process on a file that already contains the pixels, it blurs whatever happened to be in
+the frame rather than what was identified as sensitive, and a mild blur can be partly undone.
+Use it for emphasis and nothing else.
+
+Two things it does that the version it came from did not:
+
+- **Marks that would fall off the canvas are refused, not clipped.** SVG and `sharp` both clip
+  silently, so an off-image highlight used to produce a clean-looking annotated screenshot with
+  no box on it and no error anywhere. Now it exits 1 naming the coordinate and the actual
+  dimensions.
+- **A callout flips below its point when there is no room above.** The original always
+  subtracted the bubble height from `y`, so a callout on a toolbar button, a tab or a menu —
+  most of what gets called out — was drawn at a negative `y`. On a 400x300 frame a callout at
+  `y=10` drew 1,074 of its 5,620 pixels and lost all of its text, and still printed a success
+  line. Bubbles are clamped horizontally for the same reason: without it, a callout near an
+  edge lost about half its ink.
+
+`scripts/smoke-test.js` asserts both by differencing the output against the un-annotated base
+and measuring where the ink landed. Restore either old behaviour and the suite goes red.
+
+It does not fabricate UI states. The tool this came from could also swap the text in a field so
+a screenshot showed a value the application never displayed, and that half was left behind
+deliberately: a capture is evidence of what the application did.
+
+Callout bubbles are sized from a per-character width table rather than real font metrics, since
+measuring text properly needs a font stack this module does not load. The estimate rounds up, so
+a bubble comes out slightly wider than it needs to be rather than overflowing its text.
+
 ## Configuration
 
 Everything environment-specific lives in `capture.config.json`. Nothing is hardcoded in
@@ -180,6 +236,7 @@ Everything environment-specific lives in `capture.config.json`. Nothing is hardc
 | `resolvers` | the resolution cascade order, Tesseract paths, template directory, optional vision command |
 | `referenceLookup` | optional command run when a target cannot be resolved |
 | `agentHandoff` | optional coding-agent CLI handed a failure report for diagnosis |
+| `annotate` | mark-up colours, stroke width, font family and size, focus blur strength |
 
 Credentials never go in this file.
 

@@ -10,6 +10,7 @@
     "smoke": "node scripts/smoke-test.js",
     "capture": "node run-modules.js",
     "diff": "node diff-runs.js",
+    "annotate": "node annotate.js",
     "repl": "node repl.js",
     "setup": "node setup.js"
   },

@@ -136,5 +136,21 @@
     "stdinSentinel": "-",
     "versionArgs": ["--version"],
     "timeoutMs": 900000
+  },
+
+  "annotate": {
+    "$comment": [
+      "Mark-up styling for annotate.js. accent is the highlight box and arrow colour;",
+      "blurSigma is how hard --focus blurs everything outside its box. Set your house",
+      "colours here rather than editing lib/annotate.js."
+    ],
+    "accent": "#E63946",
+    "calloutBg": "#FFFFFF",
+    "calloutText": "#1D1D1D",
+    "calloutBorder": "#1D1D1D",
+    "strokeWidth": 3,
+    "fontFamily": "Arial, Helvetica, sans-serif",
+    "fontSize": 14,
+    "blurSigma": 12
   }
 }
