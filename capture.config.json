@@ -1,0 +1,140 @@
+{
+  "$comment": [
+    "Every environment-specific value the kit needs lives here. Nothing is hardcoded",
+    "in lib/. Copy this file, point `environments` at your own hosts, and adjust the",
+    "selectors/navigation block to match your SmartClient application's shell.",
+    "Credentials never go in this file -- use .env or CAPTURE_USER / CAPTURE_PASS."
+  ],
+
+  "environments": {},
+
+  "app": {
+    "$comment": "Paths are appended to an environment's origin. Defaults suit a CAS-fronted app.",
+    "loginPath": "/cas/login",
+    "loginServicePath": "/app/index.html",
+    "appPath": "/app/index.html",
+    "usernameSelector": "#username",
+    "passwordSelector": "#password",
+    "submitSelector": "input[type=\"submit\"]",
+    "loadingOverlayText": "Loading",
+    "overlayClassFragments": ["screenCover", "glasspane", "modalMask"],
+    "authPathFragment": "/cas/"
+  },
+
+  "viewport": { "width": 1440, "height": 900 },
+
+  "capture": {
+    "outputDir": "screenshots",
+    "crop": { "left": 0, "top": 56, "width": 1440, "height": 844 }
+  },
+
+  "redaction": {
+    "$comment": [
+      "columnLabels: grid column headers whose VALUES are always covered.",
+      "labelPatterns: field/column labels whose adjacent value is covered.",
+      "valuePatterns: regular expressions (source strings) matched against leaf text.",
+      "requireBoxes: minimum regions that must be found and verified, or the capture aborts.",
+      "identityPrefix: the logged-in-user badge in the top bar."
+    ],
+    "identityPrefix": "ID:",
+    "requireBoxes": 1,
+    "columnLabels": [
+      "Client", "Company", "Plan", "Product", "Product Group", "Role Name",
+      "User", "User ID", "User Name", "Queue", "Queue Name", "Portlet",
+      "Created By", "Updated By"
+    ],
+    "labelPatterns": [
+      "member\\s*(first|last|full)?\\s*name", "first\\s*name", "last\\s*name", "full\\s*name",
+      "patient", "subscriber", "guarantor", "dependent",
+      "dob", "date\\s*of\\s*birth", "birth\\s*date",
+      "ssn", "social\\s*security",
+      "address", "street", "city", "zip", "postal", "county",
+      "phone", "fax", "mobile", "cell", "telephone",
+      "email", "e-?mail",
+      "mrn", "medical\\s*record", "member\\s*id", "subscriber\\s*id", "beneficiary",
+      "account\\s*(number|no|#)?", "policy\\s*(number|no|#)?", "certificate", "license",
+      "created\\s*by", "updated\\s*by"
+    ],
+    "valuePatterns": [
+      "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+      "\\b\\d{3}[-.\\s]\\d{3}[-.\\s]\\d{4}\\b",
+      "\\b[\\w.+-]+@[\\w-]+\\.[\\w.-]+\\b",
+      "\\b\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b",
+      "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b",
+      "\\bhttps?://\\S+",
+      "\\b[A-Z0-9]{7,}\\b"
+    ]
+  },
+
+  "guard": {
+    "$comment": "Left-clicks whose control label matches any term are cancelled in the capture phase.",
+    "forbiddenTerms": ["Save", "Submit", "Confirm", "Apply", "Delete", "Remove", "Upload"]
+  },
+
+  "navigation": {
+    "$comment": [
+      "menuLabel/adminLabel: the shell's top-level menu entries.",
+      "adminMenuItemPixel: the ONE fixed-position pixel click the benchmark found safe.",
+      "tabBarY: y of the admin tab strip; tabs: labels treated as tabs rather than list items.",
+      "paths: named 'A > B > C' routes so scripts never embed a route inline."
+    ],
+    "menuLabel": "Menu",
+    "adminLabel": "Admin",
+    "adminMenuItemPixel": [1090, 97],
+    "adminPostCondition": { "label": "Access", "ymin": 75, "ymax": 110 },
+    "tabBarY": 95,
+    "tabs": [],
+    "paths": {}
+  },
+
+  "resolvers": {
+    "$comment": [
+      "tiers: order of the resolution cascade. Drop 'vlm' to guarantee no capture ever",
+      "  leaves this machine -- the vision tier uploads a screenshot to vision.command.",
+      "tesseractCandidates: absolute paths to try before falling back to PATH. Tesseract is",
+      "  often installed without being on PATH. ${ENVVAR} is expanded, e.g.",
+      "  \"${LOCALAPPDATA}/Programs/Tesseract-OCR/tesseract.exe\". TESSERACT_BIN wins over this.",
+      "templateDir: reference crops for the template-match tier. None ship with the kit;",
+      "  they are screenshots of your application, so .gitignore blocks them.",
+      "vision: an external CLI that accepts an image, a JSON schema, and a prompt on stdin.",
+      "  null command disables the tier. Placeholders in args: {root} {image} {schema} {out}."
+    ],
+    "tiers": ["dom", "ocr", "template"],
+    "templateDir": "assets/templates",
+    "tesseractCandidates": [],
+    "vision": {
+      "command": null,
+      "args": [],
+      "stdinSentinel": "-",
+      "versionArgs": ["--version"],
+      "timeoutMs": 60000
+    }
+  },
+
+  "referenceLookup": {
+    "$comment": [
+      "Optional command run when every resolver tier misses a target, to surface docs about",
+      "the unclear term before the run halts. null just hard-stops. The term is appended to",
+      "args unless one of them contains {term}."
+    ],
+    "command": null,
+    "args": [],
+    "cwd": null,
+    "timeoutMs": 60000
+  },
+
+  "agentHandoff": {
+    "$comment": [
+      "Optional coding-agent CLI handed a FAILURE-*.json for diagnosis. null disables it, and",
+      "it only fires when CAPTURE_AGENT_HANDOFF=1. Placeholders: {root} {out} {image} {report}.",
+      "imageArgs are appended only when the failure screenshot exists; stdinSentinel is the",
+      "argument that tells the CLI to read the prompt from stdin."
+    ],
+    "command": null,
+    "args": [],
+    "imageArgs": [],
+    "stdinSentinel": "-",
+    "versionArgs": ["--version"],
+    "timeoutMs": 900000
+  }
+}

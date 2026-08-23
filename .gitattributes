@@ -1,0 +1,8 @@
+# Normalize to LF in the repository and on checkout. Everything tracked here is
+# JavaScript, JSON or Markdown.
+* text=auto eol=lf
+
+# Binary, if any ever gets committed deliberately.
+*.png binary
+*.jpg binary
+*.webm binary

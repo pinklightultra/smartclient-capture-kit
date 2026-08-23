@@ -1,0 +1,48 @@
+# Credentials. setup.js writes CAPTURE_USER / CAPTURE_PASS here.
+.env
+
+# Saved Playwright storageState from lib/session.js. These files contain LIVE SESSION
+# COOKIES and are equivalent to a password: anyone holding one is logged in as you until
+# the server expires it. A committed cookie jar is not fixed by deleting the file later,
+# because the history keeps it -- the fix is revoking the session.
+.auth/
+storageState*.json
+
+# Captured output. Every one of these is a picture of a live application, which is why the
+# redaction pass is mandatory rather than optional -- but redaction is a mitigation, not a
+# guarantee, so none of it belongs in version control.
+screenshots/
+videos/
+probe/
+bench-results.json
+FAILURE-*.json
+
+# Unresolved-target reports from lib/reference-stop.js. These default to the CURRENT
+# WORKING DIRECTORY, i.e. the repo root, and each one contains location.href plus up to
+# 60 visible labels scraped from the authenticated application.
+UNKNOWN-*.json
+*.png
+*.jpg
+*.jpeg
+*.webm
+*.mp4
+
+# Reference crops for the template-match resolver tier. These are screenshots of your
+# application by definition.
+assets/templates/
+
+# Your own environment list, if you keep it out of capture.config.json.
+capture.config.local.json
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json.bak
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
