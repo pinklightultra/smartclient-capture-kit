@@ -17,6 +17,9 @@ probe/
 # repl.js shot() output. Unredacted by design -- it is an exploration aid, and safeShot is
 # the thing that redacts. That makes these MORE sensitive than screenshots/, not less.
 repl-shots/
+# diff-runs.js --strips output. Each strip embeds two full captures side by side, so it is
+# exactly as sensitive as the two images that went into it.
+diffs/
 bench-results.json
 FAILURE-*.json
 

@@ -81,6 +81,7 @@ node scripts/probe-isc-state.js --env staging           # what is actually on sc
 node scripts/bench-interaction.js --env staging         # re-measure click strategies
 node repl.js --env staging                              # one live session, many attempts
 node watch.js -- node run-modules.js --env staging --modules login
+node diff-runs.js --before ./shots/4.2 --after ./shots/4.3   # what changed between runs
 ```
 
 Prefer `--env` over `--url`, and prefer `.env` or `CAPTURE_USER`/`CAPTURE_PASS` over
@@ -125,6 +126,43 @@ the failed beat or confirms anything was repaired. `--rerun` lets the agent driv
 browser, which is off by default because your capture session may still be open against the
 same environment. The agent gets write access to the repo through whatever CLI you configured,
 and nothing gates or rolls back an edit, so read the diff.
+
+### diff-runs.js, for deciding which screens to re-review
+
+A release lands, you re-run a module, and now you have forty new screenshots and no idea
+which ones moved. `diff-runs.js` pairs images by filename between two directories and sorts
+them by how much of each screen changed:
+
+```bash
+node diff-runs.js --before ./shots/4.2 --after ./shots/4.3 --strips ./diffs
+```
+
+`--strips` writes a `[ before | diff | after ]` strip per changed screen. `--changed-at`
+sets the percentage above which a screen counts as changed (default `0.5`), and
+`--threshold` is pixelmatch's per-pixel colour tolerance (default `0.1`). It uses `sharp`
+and `pixelmatch`, which the kit already depends on, so this adds nothing to install.
+
+**It counts pixels. It does not know which differences matter.** A timestamp, one extra grid
+row, a scrollbar, or a re-rendered chart all register. Read the output as a worklist, never
+as a verdict.
+
+Three things it deliberately does:
+
+- **It pads, it never scales.** Full-page captures of the same screen routinely differ in
+  height, and resizing to fit centres the letterbox, which shifts content that did not move.
+  On a 300x200 capture against a 300x350 one whose top 200px is byte-identical, the true
+  answer is 42.86% and resize-with-contain reports 64.29%. Padding from the top-left reports
+  42.86%.
+- **An unreadable image fails, loudly.** A truncated or zero-byte capture throws rather than
+  returning a null difference, because a null compares false against any threshold and would
+  file a broken capture under "unchanged".
+- **It tells you what it did not compare.** Files present in only one directory are listed and
+  named as uncompared, because a renamed screen otherwise looks like one removal and one
+  addition, and "12 changed" reads like a complete answer when three files never got read.
+
+Exit codes are `0` for no changes, `3` for changes found, and `1` only when the run did not
+measure what it claims to have measured: a missing directory, a bad argument, or any failed
+comparison. A wrapper script should break on `1`, not on `3`.
 
 ## Configuration
 

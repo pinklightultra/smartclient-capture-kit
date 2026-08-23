@@ -9,6 +9,8 @@
  * - screenshot redaction finds PHI/PII and writes a PNG
  * - safeShot(), the capture front door, covers a configured column's values
  * - safeShot() writes NO FILE when a configured column is on screen but uncoverable
+ * - lib/diff.js measures a known change exactly, pads instead of scaling, and THROWS
+ *   on an unreadable image rather than reporting it as unchanged
  *
  * No application environment or credentials are used. Everything runs against a
  * synthetic page built by setContent below, so this is safe to run anywhere.
@@ -52,7 +54,111 @@ async function connectOverCdpWithRetry(port) {
   throw lastError;
 }
 
+/**
+ * lib/diff.js checks. No browser, no credentials, so these run first: a diff bug should
+ * fail in a second rather than after a Chromium launch.
+ *
+ * Every expected value here is arithmetic done by hand, not a figure captured from a
+ * previous run. A golden number recorded from the code under test only proves the code
+ * still does what it did, which is not the same as doing the right thing.
+ */
+async function diffChecks() {
+  const sharp = require('sharp');
+  const { compareImages, listPairs, diffRuns, DiffError } = require('../lib/diff');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'capture-kit-diff-'));
+  const solid = (w, h, c) => sharp({ create: { width: w, height: h, channels: 4, background: c } }).png();
+  const BLUE = { r: 20, g: 90, b: 170, alpha: 1 };
+  const WHITE = { r: 255, g: 255, b: 255, alpha: 1 };
+  const p = (n) => path.join(dir, n);
+
+  try {
+    // 1. Identical images differ by nothing. Anything above 0 here means the pipeline is
+    //    introducing noise of its own, and every other number is then untrustworthy.
+    await solid(200, 150, BLUE).toFile(p('a.png'));
+    await solid(200, 150, BLUE).toFile(p('b.png'));
+    const same = await compareImages(p('a.png'), p('b.png'));
+    assert.equal(same.diffPercent, 0, `identical images reported ${same.diffPercent}% different`);
+    assert.equal(same.padded, false, 'same-size images were reported as padded');
+
+    // 2. A 20x20 square on a 200x150 image is 400 of 30000 pixels, which is 1.33%.
+    const square = await solid(20, 20, { r: 255, g: 0, b: 0, alpha: 1 }).toBuffer();
+    await sharp(p('a.png')).composite([{ input: square, left: 0, top: 0 }]).png().toFile(p('c.png'));
+    const small = await compareImages(p('a.png'), p('c.png'));
+    assert.equal(small.diffPixels, 400, `expected exactly 400 changed pixels, got ${small.diffPixels}`);
+    assert.equal(small.diffPercent, 1.33, `expected 1.33%, got ${small.diffPercent}%`);
+
+    // 3. THE PADDING CHECK. A 300x200 capture against a 300x350 one whose top 200px is
+    //    byte-identical and whose extra 150px is new content. Only the new region differs:
+    //    300*150 / 300*350 = 42.86%. Scaling to fit would centre the letterbox, shift the
+    //    identical header down by 75px, and overstate this.
+    const header = await solid(300, 200, BLUE).toBuffer();
+    const rows = await solid(300, 150, { r: 240, g: 240, b: 120, alpha: 1 }).toBuffer();
+    await sharp({ create: { width: 300, height: 200, channels: 4, background: WHITE } })
+      .composite([{ input: header, left: 0, top: 0 }]).png().toFile(p('short.png'));
+    await sharp({ create: { width: 300, height: 350, channels: 4, background: WHITE } })
+      .composite([{ input: header, left: 0, top: 0 }, { input: rows, left: 0, top: 200 }])
+      .png().toFile(p('tall.png'));
+    const grew = await compareImages(p('short.png'), p('tall.png'));
+    assert.equal(grew.diffPercent, 42.86, `expected 42.86% for the grown region, got ${grew.diffPercent}%`);
+    assert.equal(grew.padded, true, 'a size difference was not reported as padded');
+    assert.equal(grew.sizeA, '300x200');
+    assert.equal(grew.sizeB, '300x350');
+
+    // 4. An unreadable image THROWS. This is the check that matters most: the version this
+    //    was extracted from returned { diffPercent: null }, and `null > threshold` is false,
+    //    so a truncated capture was reported as unchanged. Assert the throw, not a value.
+    fs.writeFileSync(p('corrupt.png'), 'this is not a png');
+    await assert.rejects(() => compareImages(p('a.png'), p('corrupt.png')),
+      (e) => e instanceof DiffError, 'an undecodable image did not throw DiffError');
+    fs.writeFileSync(p('empty.png'), '');
+    await assert.rejects(() => compareImages(p('a.png'), p('empty.png')),
+      (e) => e instanceof DiffError, 'a zero-byte image did not throw DiffError');
+    await assert.rejects(() => compareImages(p('a.png'), p('does-not-exist.png')),
+      (e) => e instanceof DiffError, 'a missing image did not throw DiffError');
+
+    // 5. diffRuns records a failure as a failure. If a bad pair ever lands in `unchanged`
+    //    the whole tool becomes a machine for overlooking broken captures.
+    const runA = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-runA-'));
+    const runB = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-runB-'));
+    try {
+      fs.copyFileSync(p('a.png'), path.join(runA, 'same.png'));
+      fs.copyFileSync(p('b.png'), path.join(runB, 'same.png'));
+      fs.copyFileSync(p('a.png'), path.join(runA, 'moved.png'));
+      fs.copyFileSync(p('c.png'), path.join(runB, 'moved.png'));
+      fs.copyFileSync(p('a.png'), path.join(runA, 'broken.png'));
+      fs.writeFileSync(path.join(runB, 'broken.png'), 'not a png');
+      fs.copyFileSync(p('a.png'), path.join(runA, 'gone.png'));
+      fs.copyFileSync(p('a.png'), path.join(runB, 'added.png'));
+
+      const r = await diffRuns(runA, runB, { changedAt: 0.5 });
+      assert.equal(r.compared, 3, `expected 3 paired files, got ${r.compared}`);
+      assert.equal(r.failures.length, 1, `expected 1 failure, got ${r.failures.length}`);
+      assert.equal(r.changed.length, 1, `expected 1 changed, got ${r.changed.length}`);
+      assert.equal(r.unchanged.length, 1, `expected 1 unchanged, got ${r.unchanged.length}`);
+      assert.ok(!r.unchanged.some((u) => u.name === 'broken.png'), 'a failed comparison was filed as unchanged');
+      assert.deepEqual(r.onlyInA, ['gone.png']);
+      assert.deepEqual(r.onlyInB, ['added.png']);
+      // The counts must account for every paired file, or the summary is a partial answer
+      // presented as a total.
+      assert.equal(r.changed.length + r.unchanged.length + r.failures.length, r.compared,
+        'changed + unchanged + failures does not equal the number of pairs compared');
+      assert.equal(listPairs(runA, runB).pairs.length, 3);
+    } finally {
+      fs.rmSync(runA, { recursive: true, force: true });
+      fs.rmSync(runB, { recursive: true, force: true });
+    }
+
+    console.log('PASS diff measures a 400-pixel change as exactly 1.33%');
+    console.log('PASS diff pads instead of scaling (42.86% on a grown page, not more)');
+    console.log('PASS diff throws on corrupt, zero-byte and missing images');
+    console.log('PASS diffRuns counts a failed pair as a failure, never as unchanged');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
+  await diffChecks();
   const port = await getFreePort();
   const output = path.join(os.tmpdir(), `capture-kit-smoke-${process.pid}.png`);
   // safeShot() takes a directory, not a path, so it gets its own scratch dir under the OS
