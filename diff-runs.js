@@ -96,6 +96,47 @@ if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
     process.exit(1);
   }
 
+  const htmlPath = get('--html');
+  if (htmlPath) {
+    const fs = require('fs');
+    const rows = r.changed.concat(r.unchanged).map((item) => `
+      <tr style="border-bottom: 1px solid #ddd;">
+        <td style="padding: 10px; font-family: monospace;">${item.name}</td>
+        <td style="padding: 10px; font-weight: bold; color: ${item.diffPercent >= r.changedAt ? '#d9534f' : '#5cb85c'};">${item.diffPercent}%</td>
+        <td style="padding: 10px;">${item.padded ? `Padded (${item.sizeA} &rarr; ${item.sizeB})` : 'Exact Match'}</td>
+      </tr>
+    `).join('');
+    const htmlReport = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SmartClient Visual Diff Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 2rem; background: #fafafa; color: #222; }
+    h1 { margin-bottom: 0.5rem; }
+    .meta { margin-bottom: 1.5rem; color: #666; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; }
+    th { background: #f0f4f8; text-align: left; padding: 12px; border-bottom: 2px solid #dde; }
+  </style>
+</head>
+<body>
+  <h1>SmartClient Visual Regression Diff Report</h1>
+  <div class="meta">
+    Total Compared: <strong>${r.compared}</strong> &bull;
+    Changed: <strong style="color: #d9534f;">${r.changed.length}</strong> &bull;
+    Unchanged: <strong style="color: #5cb85c;">${r.unchanged.length}</strong> &bull;
+    Threshold: <strong>${r.changedAt}%</strong>
+  </div>
+  <table>
+    <thead><tr><th>Screen Name</th><th>Diff Pixel %</th><th>Dimensions</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>`;
+    fs.writeFileSync(htmlPath, htmlReport, 'utf8');
+    console.log(`Visual HTML report written: ${htmlPath}`);
+  }
+
   console.log('A high percentage means pixels moved, not that anything is wrong. Look at the strips.');
   process.exit(r.changed.length ? 3 : 0);
 })();
