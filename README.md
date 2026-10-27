@@ -180,8 +180,8 @@ callouts on top. Colours, stroke width and font size come from the `annotate` bl
 `capture.config.json`, with `--accent` and `--font-size` as per-run overrides.
 
 **Every coordinate is post-crop.** `--crop` is applied first and everything else is measured
-against the cropped frame, because the alternative — measuring against the original and having
-the crop shift your boxes — is a mistake you find by looking at the output. `--describe`
+against the cropped frame, because the alternative (measuring against the original and having
+the crop shift your boxes) is a mistake you find by looking at the output. `--describe`
 prints the frame you are working in and writes nothing:
 
 ```
@@ -203,8 +203,8 @@ Two things it does that the version it came from did not:
   no box on it and no error anywhere. Now it exits 1 naming the coordinate and the actual
   dimensions.
 - **A callout flips below its point when there is no room above.** The original always
-  subtracted the bubble height from `y`, so a callout on a toolbar button, a tab or a menu —
-  most of what gets called out — was drawn at a negative `y`. On a 400x300 frame a callout at
+  subtracted the bubble height from `y`, so a callout on a toolbar button, a tab or a menu (most
+  of what gets called out) was drawn at a negative `y`. On a 400x300 frame a callout at
   `y=10` drew 1,074 of its 5,620 pixels and lost all of its text, and still printed a success
   line. Bubbles are clamped horizontally for the same reason: without it, a callout near an
   edge lost about half its ink.
@@ -379,6 +379,22 @@ that turning it on is visible in the script that did it.
   cannot block a keyboard shortcut, a form that submits on Enter, or a button labelled
   something the list does not name. It reduces the risk of mutating a shared environment;
   it does not remove it. Capture against a non-production environment.
+
+## Justinbot Terminology Glossary
+
+For test automation engineers and producers exploring enterprise UI capture:
+
+| Term | Web Automation / Testing Context | Definition in `smartclient-capture-kit` |
+|---|---|---|
+| **SmartClient** | Enterprise RIA framework | Isomorphic JavaScript UI component framework that renders complex desktop-style windows, trees, and grids into custom DOM structures. |
+| **Click Mask** | Modal event interception | An invisible blocking layer drawn over the DOM by SmartClient when modal dialogs appear, absorbing mouse events as silent no-ops. |
+| **Virtualized Grid DOM** | DOM performance optimization | Only rendering table rows currently visible within the scrollport, unmounting offscreen rows so traditional CSS locators fail. |
+| **Fail-Closed Redaction** | Security / PII protection | Halting execution and refusing to write image files whenever an expected PII box or column cannot be positively identified and shielded. |
+| **Pre-Shutter Overlays** | Zero-leak screen redaction | Injecting opaque black DOM elements directly over sensitive values and verifying paint completion before the screenshot rasterizes. |
+| **Read-Only Mutation Guard** | Data corruption prevention | Event listener running in the browser capturing phase that cancels mutating clicks (Save, Submit, Delete) before application handlers run. |
+| **Chrome DevTools Protocol (CDP)** | Low-level browser driver | Direct protocol communication with Chromium allowing trusted hardware-level input synthesis and accurate bounding rect measurement. |
+| **Post-Crop Geometry** | Coordinate calculation | Measuring callout pins and highlight rectangles relative to the cropped output canvas rather than the raw viewport. |
+| **Visual Regression Diffing** | Screenshot comparison | Pixel-by-pixel image differencing highlighting changed UI components between release versions. |
 
 ## Background
 
