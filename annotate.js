@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
- * annotate.js — crop and mark up a captured screenshot for documentation.
+ * annotate.js - crop and mark up a captured screenshot for documentation.
  *
  *   node annotate.js --in shots/users.png --out doc/users.png \
  *     --crop 0,56,1440,844 --highlight 120,200,300,48 --callout 270,200,"1"
@@ -121,3 +121,4 @@ if (!input) {
     process.exit(1);
   }
 })();
+

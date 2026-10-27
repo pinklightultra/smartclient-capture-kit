@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
- * diff-runs.js — compare two directories of captures and print what changed.
+ * diff-runs.js - compare two directories of captures and print what changed.
  *
  *   node diff-runs.js --before ./screenshots/4.2 --after ./screenshots/4.3
  *   node diff-runs.js --before ./old --after ./new --strips ./diffs --changed-at 1
@@ -368,3 +368,4 @@ if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
   console.log('A high percentage means pixels moved, not that anything is wrong. Look at the strips.');
   process.exit(r.changed.length ? 3 : 0);
 })();
+

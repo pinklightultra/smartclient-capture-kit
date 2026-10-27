@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
- * synthetic-phi.js — Deterministic, realistic healthcare data generator for test fixtures.
+ * synthetic-phi.js - Deterministic, realistic healthcare data generator for test fixtures.
  *
  * Emits strictly fake Patient, Member, Provider, and Claim rows to safely stress-test
  * safeShot() fail-closed DOM/canvas redaction guards without using any real PHI/PII.
@@ -88,3 +88,4 @@ module.exports = {
   generateMember,
   generateTableHtml,
 };
+

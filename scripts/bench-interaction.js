@@ -1,5 +1,5 @@
-/**
- * bench-interaction.js — Head-to-head benchmark of click and wait strategies.
+﻿/**
+ * bench-interaction.js - Head-to-head benchmark of click and wait strategies.
  *
  * This is the script that produced the conclusions lib/nav.js is built on: which way of
  * clicking a SmartClient control actually works, and which way of waiting actually
@@ -16,13 +16,13 @@
  * + elapsed ms. Output: bench-results.json + a printed table.
  *
  * Strategies compared:
- *   A) domClick   — page.evaluate + el.click()
- *   B) mouseXY    — page.mouse.click on DOM-center coords
- *   C) pixel      — fixed pixel coordinates
- *   D) locator    — page.locator('text=...').click()
+ *   A) domClick   - page.evaluate + el.click()
+ *   B) mouseXY    - page.mouse.click on DOM-center coords
+ *   C) pixel      - fixed pixel coordinates
+ *   D) locator    - page.locator('text=...').click()
  * Wait strategies:
- *   fixed  — waitForTimeout(N)
- *   signal — poll isc.Page.isLoaded() + dismissOverlay, bounded
+ *   fixed  - waitForTimeout(N)
+ *   signal - poll isc.Page.isLoaded() + dismissOverlay, bounded
  *
  * Usage: node scripts/bench-interaction.js --env staging [--shots]
  */
@@ -194,13 +194,13 @@ async function run() {
     { scenario: 'S1 tab:Access (unique label)', label: 'Access', opts: { ymin: 75, ymax: 110 },
       verifyLabel: 'Feature Packages', verifyOpts: { ymin: 100, ymax: 860 },
       pixelPx: null },
-    // S2: ambiguous label — "Search" exists as top menu AND elsewhere
+    // S2: ambiguous label - "Search" exists as top menu AND elsewhere
     { scenario: 'S2 ambiguous:Search', label: 'Search', opts: { ymin: 40, ymax: 90 },
       verifyLabel: 'Member', verifyOpts: {} },
-    // S3: async grid section — Codes must load, then Feature Packages appears
+    // S3: async grid section - Codes must load, then Feature Packages appears
     { scenario: 'S3 async:Codes>FeaturePackages', label: 'Codes', opts: { ymin: 100, ymax: 260 },
       verifyLabel: 'Feature Packages', verifyOpts: { ymin: 100, ymax: 860 } },
-    // S4: fixed-position element (Menu) — the only fair test for pixel strategy
+    // S4: fixed-position element (Menu) - the only fair test for pixel strategy
     { scenario: 'S4 fixed:Menu (pixel-fair)', label: 'Menu', opts: { ymin: 40, ymax: 90 },
       verifyLabel: 'Admin', verifyOpts: {}, pixelPx: [1078, 69] },
   ];
@@ -219,7 +219,7 @@ async function run() {
         // Navigate the known-good precondition with mouseXY (the control), so the
         // trial only measures the ONE action under test.
         if (s.scenario.startsWith('S2')) {
-          // S2 tests clicking top-menu Search; precondition is just Admin open — ok
+          // S2 tests clicking top-menu Search; precondition is just Admin open - ok
         } else if (s.scenario.startsWith('S3')) {
           await clickMouse(page, 'Access', { ymin: 75, ymax: 110 }); await waitSignal(page);
         }
@@ -264,3 +264,4 @@ async function run() {
 }
 
 run().catch(e => { console.error('BENCH FAILED:', e.message); process.exit(1); });
+
