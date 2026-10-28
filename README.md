@@ -1,407 +1,314 @@
 # smartclient-capture-kit
 
-Playwright screenshot capture for Isomorphic SmartClient applications, built for the case
-where the environment you are capturing is one other people are using and the screens
-contain data you must not publish.
+Capture kit for documentation screenshots of an Isomorphic SmartClient application. It is for the writer producing the UI figures for a release, against an environment other people are using, where the screens contain data that must not be published.
 
-Two things make it different from a folder of Playwright scripts:
+Two controls ship on.
 
-- **Mutating clicks are blocked by default.** Save, Submit, Confirm, Apply, Delete and
-  Upload are cancelled in the DOM before the application's own handler sees them. You opt
-  out deliberately, not in.
-- **Redaction happens before the shutter.** Sensitive regions are covered with opaque
-  overlays in the live DOM, the overlays are verified as painted, and only then is the PNG
-  written. There is no blur pass to forget and no original to leak.
+**Mutating clicks are cancelled in the page.** A capture-phase listener in `lib/guard.js` blocks Save, Submit, Confirm, Apply, Delete, Remove, and Upload before the application's own handler runs. `CAPTURE_ALLOW_WRITES=1` is what disarms it.
 
-```
-$ node run-modules.js --env staging --modules login,admin
-🛡️  READ-ONLY guard active (Save/Submit/Confirm/Apply/Delete clicks blocked)
+**A PNG is written only after the cover is verified.** `run-modules.js` and `runner.js` take screenshots through `safeShot()` in `lib/capture-safe.js`. That calls `lib/redact.js`, which covers the regions you declared, checks that the overlays are painted at the requested geometry, takes the screenshot, checks that the overlays are still there, and only then writes the file. A failure throws `RedactionError` and leaves no file.
 
-  login    5 steps   5 captured
-  admin   11 steps  11 captured
-  [read-only guard] blocked click on "Save" (matched "Save")
-
-screenshots/staging/2026-08-22/
+```bash
+node run-modules.js --env staging --modules login,home,admin
 ```
 
-## Why this exists
+Output goes to `screenshots/<environment>/<YYYY-MM-DD>/`, plus a `capture-manifest.json` of every file written. The folder name is the key from `environments` when the host matches one. Otherwise it is the first DNS label, or the IP address with dots replaced by hyphens.
 
-I was capturing several hundred documentation screenshots per release from a SmartClient
-application. Three failures kept recurring, and none of them announced itself:
-
-**A click that reports success and does nothing.** When SmartClient raises a modal it also
-raises a click mask, and that mask eats a click as a silent no-op. Nothing throws, nothing
-logs, no navigation happens. Three identical clicks produce three identical screenshots,
-and you cannot tell that apart from a page that ignored you, not from the DOM and not from
-the image.
-
-**A folder of confident screenshots of the wrong screens.** A step names a field or menu
-option the resolver cannot actually find, the run continues, and you review 200 images
-before noticing. Nothing failed, so nothing told you.
-
-**A screenshot that shipped a real person's name.** The pixels are in the file the moment
-you take it. A redaction step that runs afterward is a step you can forget.
-
-The kit is the answer to those three. `lib/isc.js` asks the framework instead of guessing.
-`lib/reference-stop.js` halts the run rather than guessing. `lib/capture-safe.js` is the
-only door to a PNG, so redaction is not a call a script can omit.
+Install, confirm the kit, and the checks behind these claims are in [Install](#install) and [What is checked](#what-is-checked).
 
 ## Install
+
+Node 20.9 or newer. That floor is `engines` in `package.json`, and it is sharp's requirement.
 
 ```bash
 git clone https://github.com/pinklightultra/smartclient-capture-kit
 cd smartclient-capture-kit
 npm install
 npx playwright install chromium
-node scripts/smoke-test.js
+npm run smoke
 ```
 
-The smoke test needs no application, no credentials and no network. It builds a synthetic
-page, asserts the guard blocks a Save click and allows an ordinary one, asserts the
-redactor finds and covers regions, and asserts CDP attachment works.
+`npm run smoke` runs `node scripts/smoke-test.js`. The test uses no application, no credentials, and no network. It builds its own page. The assertions are listed under [What is checked](#what-is-checked).
 
-Then point it at something:
+Point it at an environment after that. Credentials go in `.env`, which is gitignored. Hosts go in `capture.config.json`. `lib/` does not contain a URL.
 
 ```bash
-node setup.js                      # writes .env, then optionally adds an environment
-node setup.js --add-env            # adds an environment to capture.config.json
-node setup.js --test staging       # logs in read-only and confirms the app loads
+node setup.js                 # writes .env as CAPTURE_USER and CAPTURE_PASS
+node setup.js --add-env       # adds a named host under environments
+node setup.js --test staging  # logs in with the guard forced on and confirms the app loads
 ```
 
-Node 20.9 or newer, which is sharp's floor rather than this kit's.
+`setup.js` writes the `environments` block of `capture.config.json`, the file `lib/config.js` reads. The missing-credentials error mentions `.env.example`. That file is not in the repo. `setup.js` is what creates `.env`.
 
-## Use
+## Capture a release
 
 ```bash
-node run-modules.js --list                              # available modules
-node run-modules.js --list-envs                         # configured environments
-node run-modules.js --env staging --modules login,admin
+node run-modules.js --list
+node run-modules.js --list-envs
+node run-modules.js --env staging --modules login,home,admin
+node run-modules.js --env staging --modules admin --headed
+node run-modules.js --env staging --modules login --out /path/to/captures
+```
+
+Prefer `--env` to `--url`, so the hostname stays out of shell history. Prefer `.env`, or `CAPTURE_USER` and `CAPTURE_PASS` together, to `--user` and `--pass`. Arguments are visible in the process list. When both are present, `--user` and `--pass` win. `lib/config.js` checks them first, then the environment, then `.env`.
+
+| Module | What it captures | Requires |
+| --- | --- | --- |
+| `login` | Empty login form, credentials filled, post-login home | |
+| `home` | My Cases overview. A toolbar file is attempted when a navbar is visible | `login` |
+| `admin` | Admin landing, then each tab found in the tab strip | `login` |
+
+`run-modules.js` pulls prerequisites in first, so `--modules admin` runs `login` before `admin`.
+
+The toolbar step in `modules/home.js` passes the navbar box as `{ x, y, width, height }`. `redact()` reads `left` and `top`. Those properties are missing, so the crop arithmetic is `NaN`, and the bounds check does not raise `RedactionError` because a comparison with `NaN` is false. The overview file from the step before it uses the default crop and is unaffected. Do not treat `home-toolbar.png` as a figure the module produces.
+
+When the guard installs, the runner prints this line and continues:
+
+```text
+🛡️  READ-ONLY guard active (Save/Submit/Confirm/Apply/Delete clicks blocked)
+```
+
+The line is printed only after `installClickGuard()` returns true. If the guard was required and did not install, the browser closes and the run throws. The terms that actually match are `guard.forbiddenTerms`. The shipped list also includes Remove and Upload. The banner names the five you meet most often.
+
+The login form can still be submitted. `lib/guard.js` skips submit, password, and text fields when the path contains `app.authPathFragment` (shipped as `/cas/`) or the username and password fields are on the page. That exemption is authentication. It is not a pass for an in-app Save.
+
+Each figure is logged as `📸 <module>-<name>.png (N region(s) covered)`. A `RedactionError` aborts the run. One screen that cannot be covered is a reason to stop, because the same miss will recur on the next screen.
+
+For a single walkthrough instead of a module:
+
+```bash
 node runner.js --url https://staging.example.com --script scripts/example-screens.js
-node scripts/probe-isc-state.js --env staging           # what is actually on screen
-node scripts/bench-interaction.js --env staging         # re-measure click strategies
-node repl.js --env staging                              # one live session, many attempts
-node watch.js -- node run-modules.js --env staging --modules login
-node diff-runs.js --before ./shots/4.2 --after ./shots/4.3   # what changed between runs
-node annotate.js --in shot.png --out doc.png --highlight 120,200,300,48   # crop and mark up
 ```
 
-Prefer `--env` over `--url`, and prefer `.env` or `CAPTURE_USER`/`CAPTURE_PASS` over
-`--user`/`--pass`. Arguments are visible in the process list to every other user on the
-machine; the environment name keeps the hostname out of your shell history.
+A screen script exports one async function. `runner.js` calls it with `{ page, baseUrl, screenshotDir, screenshot }` and closes the browser afterwards. Call `screenshot`. It is `safeShot()`. `page.screenshot()` writes the page as it is, and nothing later rejects that file. `runner.js` does not log in. `scripts/example-screens.js` is the contract, including the login call.
 
-### repl.js, for the part that takes the longest
+`node scripts/probe-isc-state.js --env staging` logs in under the guard, prints whether a click mask is up, and writes `probe/isc_state_<env>.json`. Reach for it when a click reports success and the screen stays put.
 
-Writing a selector or a navigation path takes ten or twenty attempts, and a cold launch plus
-a login costs 15-20 seconds each time. `repl.js` holds one authenticated context open so you
-pay that once:
+## Three ways a finished run is still wrong
 
-```bash
-CAPTURE_READONLY=1 node repl.js --env staging
-capture> await nav.goto(page, 'Admin > Users')
-capture> reload('./lib/nav')          # after editing lib/nav.js
-capture> await shot('users')          # ./repl-shots/users.png
-capture> await relogin()              # cookies went stale; rebinds page and context
-```
+Each of these looks like a successful run: no exception, a full folder, and figures you still cannot publish. What follows is the code that stands in the way, and the result is only as strong as that code.
 
-`page`, `context`, `browser`, your libs, and `reload`/`shot`/`relogin` are preloaded.
-Credentials are optional only when a saved session exists for that host, since resuming one
-never touches the login form.
+### The click lands and the screen does not change
 
-Two things worth knowing. `shot()` is **not** `safeShot`: it writes an unredacted picture of a
-live application, which is correct for looking at what you just did and wrong for anything you
-keep, so `repl-shots/` is gitignored. And `relogin()` closes the old context and rebinds `page`,
-rather than only re-priming the saved state, because re-priming alone writes fresh cookies to
-disk while the browser in front of you stays logged out.
+When SmartClient raises a modal it also raises a click mask. The mask consumes the click. Nothing is logged, and the next screenshot matches the last one. You cannot separate that from a control that ignored you by looking at the DOM or at the image.
 
-### watch.js, for a run that fails in the middle
+`lib/isc.js` reads the framework. `clickMaskUp()` and `iscState()` report whether a mask is up. The probe script in the previous section prints that flag and saves the widget list. `locateCell()` matches a field value against the grid widget's data, `scrollToRow()` calls `scrollRecordIntoView()`, and the widget returns `getCellPageRect()`. Grids are virtualized: the row you want may not be in the DOM until it is scrolled into view, so a DOM sweep, OCR, and a vision pass all miss it. These functions return geometry. The caller issues the mouse action, so `lib/guard.js` still sees it.
 
-`watch.js` wraps a capture, watches for `FAILURE-*.json`, and hands each one to the CLI
-configured under `agentHandoff`. The wrapped command keeps its own stdout.
+The click has to be a trusted event. SmartClient's event manager ignores `element.click()` inside `page.evaluate`. Playwright's mouse API goes through CDP `Input.dispatchMouseEvent`, which the browser marks trusted. `lib/nav.js` records the benchmark this is based on, from `scripts/bench-interaction.js`: `domClick` verified 0 of 8, a text locator and a DOM-center mouse click verified on every correctly specified target, and a fixed pixel was reliable only for a control that does not move. Polling `isc.Page.isLoaded()` matched a fixed wait on that run and returned faster, 1.7 seconds a step against 7.1, about four times. Those figures are one run against one application. `bench-results.json` is gitignored because it names screens. The fixed wait cannot beat 6 seconds: `waitFixed` defaults to 6000 ms and then dismisses overlays. Re-measure with `node scripts/bench-interaction.js --env <name>` before treating the times as a property of your shell.
 
-```bash
-node watch.js -- node run-modules.js --env staging --modules login,home,admin
-```
+`clickLabel()` in `lib/nav.js` is the click a script should make. An unbanded label goes to a Playwright text locator, then a DOM-center mouse click, then the visual tiers in `lib/resolvers.js` (`ocr`, then `template`, then `vision` if you put it in `resolvers.tiers`). A vertical band (`ymin` / `ymax`) or a substring match goes straight to the mouse click. A text locator cannot express either, and a band is how a label that appears twice gets disambiguated. The visual tier returns a point and does not click. `clickLabel()` clicks with `locator.click()` or `page.mouse.click()`, both of which dispatch a DOM event, so the capture-phase guard still runs.
 
-It does not verify a fix. It collects an agent's diagnosis and says so; nothing here re-runs
-the failed beat or confirms anything was repaired. `--rerun` lets the agent drive its own
-browser, which is off by default because your capture session may still be open against the
-same environment. The agent gets write access to the repo through whatever CLI you configured,
-and nothing gates or rolls back an edit, so read the diff.
+`waitForIsc()` polls `isc.Page.isLoaded()` and, when the caller passes `expect`, an element that exists on the destination. The load signal can be true for the page you are leaving. `openAdmin()` waits on `navigation.adminPostCondition` for that reason. The wait is bounded by its budget. A post-condition that never appears does not throw inside `waitForIsc()`.
 
-### diff-runs.js, for deciding which screens to re-review
+**Result.** A step can name the screen it expects, and it can ask the framework whether a mask is up. Arrival is that named element becoming present. The mask stays up until something dismisses it. `clickMaskUp()` is a probe you call, from the probe script or from the REPL (`isc.clickMaskUp(page)`).
 
-A release lands, you re-run a module, and now you have forty new screenshots and no idea
-which ones moved. `diff-runs.js` pairs images by filename between two directories and sorts
-them by how much of each screen changed:
+### The folder fills with the wrong screens
+
+A step names a field or a menu item nothing can find. The run continues. The images look finished.
+
+`lib/reference-stop.js` is the hard stop, and it is off until you set `CAPTURE_REFERENCE_STOP=1` (or pass `referenceStop` on the call). When it is on, `clickLabel()` writes `UNKNOWN-<term>.json` after every tier misses, runs `referenceLookup.command` if you configured one, and throws. With no lookup command, the report and the throw still happen. The report holds the URL and up to 60 visible labels when a page was passed. `UNKNOWN-*.json` is gitignored because that snapshot is from an authenticated application. Hot loops that expect a miss leave the variable unset and get `{ ok: false }` instead of a throw. `openAdmin()` opts out on its own menu click, so a missing Admin label falls through to `navigation.adminMenuItemPixel` rather than stopping the run.
+
+`lib/beat-runner.js` is that stop for a scripted walkthrough, and it is on for every beat you run through it. Each beat carries a declarative assertion (`{ "type": "textVisible", "text": "Modify Roles" }`). The action and the assertion retry together. On the last failure it writes `FAILURE-<label>.json` and the visible labels, writes a screenshot when redaction succeeds, and throws. The modules under `modules/` do not call `runBeat()`. Use the beat runner for a walkthrough that has to stop on a missed post-condition.
+
+`lib/isc-nav.js` `navigatePath()` walks an `Admin > A > B > C` path. A tab, a dropdown item, and a section header confirm arrival differently. A section header keeps its text when it opens, so "the label is still there" proves nothing. Pass `expectPerSeg` with an element that exists only once that section is open. The function returns `{ ok, reached, failedAt }`.
+
+**Result.** With `CAPTURE_REFERENCE_STOP=1`, an unresolved label stops `clickLabel()` and leaves a report. With the beat runner, a failed assertion stops the walkthrough and leaves `FAILURE-*.json`. A module run, by itself, does neither. `admin` waits on its post-condition for the budget in `openAdmin()`, then captures whatever is on screen.
+
+### The figure contains data you cannot publish
+
+The pixels are in the file the moment the screenshot is taken. A redaction pass afterwards is a pass you can skip, and the original is already on disk.
+
+`lib/redact.js` covers three things, all from the `redaction` block:
+
+1. The operator badge: leaf text matching `identityPrefix` (shipped as `ID:`) in the top 80 CSS pixels.
+2. Leaf text matching `valuePatterns`. The shipped expressions match a US Social Security number, a 10-digit phone or fax number, an email address, a numeric date, an IPv4 address, an `http(s)` URL, and an uppercase alphanumeric identifier of seven characters or more.
+3. The value beside a label in `labelPatterns`, or in the column under a header matched the same way. The label stays readable. `safeShot()` also covers values under `redaction.columnLabels`, found by header text rather than by a fixed coordinate.
+
+`requireBoxes` ships as `1`. The redactor treats zero regions on an authenticated screen as a detection failure, because this shell's screens carry the operator badge. `allowUnredacted: true` bypasses that floor. It is an argument on the `safeShot()` or `redact()` call, so the script that opted out shows it. It does not bypass the column check below.
+
+`safeShot()` throws before `redact()` runs when a `columnLabels` header is visible and no value under it can be located. An empty box list used to look the same as a screen with no such column, and the capture came out clean.
+
+These conditions throw `RedactionError`. The file is not written first.
+
+| Condition | Where |
+| --- | --- |
+| The captured region's size cannot be determined | `captureBounds()` |
+| A region lies entirely outside the capture | `clampOrThrow()` |
+| A region would be only partly covered | `clampOrThrow()` |
+| Fewer regions than `requireBoxes`, and the call did not pass `allowUnredacted` | `redact()` |
+| An overlay is disconnected, drifted more than 1px, or is not painted | `redact()`, from `applyOverlays()` |
+| Overlays are gone after `page.screenshot()` returns | `redact()` |
+| The configured crop does not fit the capture | `redact()` |
+| A configured column header is visible and none of its values were located | `safeShot()` |
+
+The overlay check is what used to be missing. Appending a div and screenshotting on the next line writes a clean PNG when the injection did nothing: a re-render dropped the nodes, a content-security policy refused the style, or the evaluate ran against a document that had already navigated.
+
+**Result.** A capture that cannot cover what you declared does not produce a file. `scripts/smoke-test.js` builds a page whose only header is the first `redaction.columnLabels` entry and whose table has no cells under it, asserts that `safeShot()` throws `RedactionError` naming that header, and asserts that the PNG path does not exist afterwards.
+
+This covers the three configured mechanisms. It does not implement a named de-identification standard. Free text, a notes field, an avatar, a barcode, a signature, a name that matches no pattern and sits under no labelled column, text drawn into a canvas, and anything scrolled out of the capture are not detected. Read the `redaction` block and change it for the application you are shooting. The shipped patterns and labels come from one product's screens.
+
+## Review what moved
+
+Re-run a module after a release and you have a new directory of the same filenames. `diff-runs.js` pairs by filename and sorts by the share of pixels that differ.
 
 ```bash
 node diff-runs.js --before ./shots/4.2 --after ./shots/4.3 --strips ./diffs
 ```
 
-`--strips` writes a `[ before | diff | after ]` strip per changed screen. `--changed-at`
-sets the percentage above which a screen counts as changed (default `0.5`), and
-`--threshold` is pixelmatch's per-pixel colour tolerance (default `0.1`). It uses `sharp`
-and `pixelmatch`, which the kit already depends on, so this adds nothing to install.
+`--strips` writes a `[ before | diff | after ]` image per changed screen, under `./diffs` in that example. `diffs/` is gitignored because a strip contains both captures. `--changed-at` is the percentage above which a screen is listed (default `0.5`). `--threshold` is pixelmatch's per-pixel colour tolerance (default `0.1`). Both libraries are already dependencies.
 
-**It counts pixels. It does not know which differences matter.** A timestamp, one extra grid
-row, a scrollbar, or a re-rendered chart all register. Read the output as a worklist, never
-as a verdict.
+A timestamp, one extra grid row, a scrollbar, or a re-rendered chart all count. Read the list as the order to re-review. Two images can differ and both be covered, or match and both leak. Redaction is the previous section.
 
-Three things it deliberately does:
+Three behaviours are deliberate, and the smoke test locks the first two in with images it creates itself:
 
-- **It pads, it never scales.** Full-page captures of the same screen routinely differ in
-  height, and resizing to fit centres the letterbox, which shifts content that did not move.
-  On a 300x200 capture against a 300x350 one whose top 200px is byte-identical, the true
-  answer is 42.86% and resize-with-contain reports 64.29%. Padding from the top-left reports
-  42.86%.
-- **An unreadable image fails, loudly.** A truncated or zero-byte capture throws rather than
-  returning a null difference, because a null compares false against any threshold and would
-  file a broken capture under "unchanged".
-- **It tells you what it did not compare.** Files present in only one directory are listed and
-  named as uncompared, because a renamed screen otherwise looks like one removal and one
-  addition, and "12 changed" reads like a complete answer when three files never got read.
+- **Size differences are padded from the top-left.** Full-page captures of the same screen differ in height. Resizing to fit centres the shorter image, so content that did not move reads as changed. On a 300 by 200 image against a 300 by 350 image whose top 200 rows match, the new region is 300 by 150 pixels out of 300 by 350, which is 42.86%. The smoke test asserts that padded result. `lib/diff.js` records that resize-with-contain reports 64.29% on that same pair.
+- **An unreadable image throws `DiffError`.** A truncated, zero-byte, or missing file used to come back as a null difference. A null does not exceed a threshold, so the broken file was filed under unchanged. `diffRuns` counts that pair as a failure. The changed, unchanged, and failed counts add up to the number of pairs compared.
+- **A file that exists on only one side is listed and not compared.** A renamed screen is one removal and one addition. The summary says so. "12 changed" is a complete answer only when every file was paired.
 
-Exit codes are `0` for no changes, `3` for changes found, and `1` only when the run did not
-measure what it claims to have measured: a missing directory, a bad argument, or any failed
-comparison. A wrapper script should break on `1`, not on `3`.
+Exit codes: `0` when every pair compared and nothing exceeded the threshold, `3` when comparisons succeeded and at least one screen changed, `1` when a directory is missing, an argument is bad, or any comparison failed. A wrapper should fail on `1`. `3` means the tool measured a change. `--help` exits `0`. Running it with no arguments exits `1`, because a run that compared nothing is not a clean result.
 
-### annotate.js, for the crop-and-mark-up pass
+`--html report.html` writes a single page after a run that had zero failed comparisons. The page is a filterable table of the paired screens: name, changed or under the threshold, the percentage, and whether the pair was padded. The heading on that page says "Clean Matches" for pairs under the threshold. That means under `--changed-at`. It does not mean safe to publish. Unpaired files are not rows in the table. A run with a failed comparison exits `1` before the file is written. The terminal output is the one that lists failures and unpaired names.
 
-A capture is rarely the thing that ships. What ships is that capture cropped to the relevant
-panel, with a box around the control and a numbered bubble beside it:
+## Mark up the figure
+
+The image in the doc is the capture cropped to the panel, with a box on the control and a numbered bubble.
 
 ```bash
 node annotate.js --in screenshots/staging/users.png --out doc/users.png \
   --crop 0,56,1440,844 --highlight 120,200,300,48 --callout '270,190,1'
 ```
 
-`--highlight`, `--arrow` and `--callout` repeat. Marks draw in that order, boxes first and
-callouts on top. Colours, stroke width and font size come from the `annotate` block of
-`capture.config.json`, with `--accent` and `--font-size` as per-run overrides.
+`--highlight`, `--arrow`, and `--callout` repeat. Boxes draw first, then arrows, then callouts. Colours, stroke, and type size come from the `annotate` block. `--accent` and `--font-size` override one run.
 
-**Every coordinate is post-crop.** `--crop` is applied first and everything else is measured
-against the cropped frame, because the alternative (measuring against the original and having
-the crop shift your boxes) is a mistake you find by looking at the output. `--describe`
-prints the frame you are working in and writes nothing:
+Every coordinate is measured after `--crop`. The crop is applied first, and every mark is relative to that frame's top-left. `--describe` prints the frame and writes nothing:
 
-```
-$ node annotate.js --in screenshots/staging/users.png --crop 0,56,1440,844 --describe
-users.png is 1440x900
-after --crop you are working in 1440x844, origin at the crop's top-left
+```bash
+node annotate.js --in screenshots/staging/users.png --crop 0,56,1440,844 --describe
 ```
 
-`--focus x,y,w,h` blurs everything outside a box to direct the eye. **It is not redaction.**
-Redaction happens in `lib/redact.js` before the shutter; a blur applied afterwards is a
-post-process on a file that already contains the pixels, it blurs whatever happened to be in
-the frame rather than what was identified as sensitive, and a mild blur can be partly undone.
-Use it for emphasis and nothing else.
+```text
+<file> is <source width>x<source height>
+after --crop you are working in <width>x<height>, origin at the crop's top-left
+```
 
-Two things it does that the version it came from did not:
+A capture at the shipped viewport is 1440 by 900. The shipped crop is 1440 by 844 at (0, 56). Passing that crop to `--describe` prints a working frame of 1440 by 844. Those numbers are `viewport` and `capture.crop` in `capture.config.json`.
 
-- **Marks that would fall off the canvas are refused, not clipped.** SVG and `sharp` both clip
-  silently, so an off-image highlight used to produce a clean-looking annotated screenshot with
-  no box on it and no error anywhere. Now it exits 1 naming the coordinate and the actual
-  dimensions.
-- **A callout flips below its point when there is no room above.** The original always
-  subtracted the bubble height from `y`, so a callout on a toolbar button, a tab or a menu (most
-  of what gets called out) was drawn at a negative `y`. On a 400x300 frame a callout at
-  `y=10` drew 1,074 of its 5,620 pixels and lost all of its text, and still printed a success
-  line. Bubbles are clamped horizontally for the same reason: without it, a callout near an
-  edge lost about half its ink.
+`--focus x,y,w,h` blurs the pixels outside the box so the eye lands inside it. Publish a figure only after `safeShot()` has already covered the sensitive regions. A blur on a finished file covers whatever happened to be in the crop, can be partly reversed, and leaves the source PNG as it was. The smoke test asserts that the pixels inside the focus box stay byte-identical to the source.
 
-`scripts/smoke-test.js` asserts both by differencing the output against the un-annotated base
-and measuring where the ink landed. Restore either old behaviour and the suite goes red.
+A mark that falls outside the frame exits `1` and writes no file. SVG and sharp both clip without an error, so an off-image highlight used to produce an annotated PNG with no box on it. A callout whose point has no room above is drawn below the point. One near a side edge is shifted inward so the bubble stays on the canvas. The smoke test checks both by differencing the output against the unmarked image and measuring where the ink landed, on a 400 by 300 fixture. Bubble width is a per-character estimate, rounded up. Measuring the text would need a font this module does not load, so the bubble runs slightly wide of its text.
 
-It does not fabricate UI states. The tool this came from could also swap the text in a field so
-a screenshot showed a value the application never displayed, and that half was left behind
-deliberately: a capture is evidence of what the application did.
+`annotate.js` draws on the capture. It does not change the text in a control. The figure is a record of what the application showed. Refusing to overwrite the source is tested: annotating a file onto itself throws `AnnotateError`.
 
-Callout bubbles are sized from a per-character width table rather than real font metrics, since
-measuring text properly needs a font stack this module does not load. The estimate rounds up, so
-a bubble comes out slightly wider than it needs to be rather than overflowing its text.
+## Find a screen before you script it
+
+`lib/session.js` saves the authenticated browser state so a later context can skip the form. The comment there puts a cold launch plus a form login at about 15 to 20 seconds. `repl.js` is the only entry point that uses that saved state. It holds one context open while you try the path:
+
+```bash
+CAPTURE_READONLY=1 node repl.js --env staging
+```
+
+```text
+capture> await iscNav.navigatePath(page, 'Admin > Users')
+capture> reload('./lib/nav')
+capture> await shot('users')
+capture> await relogin()
+```
+
+`page`, `context`, `browser`, `nav`, `isc`, `iscNav`, `redact`, `guard`, `session`, `config`, `reload`, `shot`, and `relogin` are already bound. Top-level await works. Credentials are optional only when a saved session file exists for that host. If those cookies have expired, login still needs `CAPTURE_USER` and `CAPTURE_PASS`.
+
+The guard follows `lib/guard.js` here too: on, unless this process has `CAPTURE_ALLOW_WRITES=1`. Set `CAPTURE_READONLY=1` when a parent shell may have allowed writes. An exploratory session is where a stray click hits Save.
+
+`shot()` writes `./repl-shots/<name>.png` through `page.screenshot()`. Nothing is covered. `repl-shots/` is gitignored. Use it to see the screen you just reached. Anything you will publish goes through `safeShot()`.
+
+`relogin()` closes the old context, deletes the saved state, logs in again, and rebinds `page` and `context`. Re-priming the state file alone writes new cookies while the browser in front of you stays on the old context.
+
+`watch.js` polls for `FAILURE-*.json` and hands each new file to `agentHandoff.command`. The wrapped command keeps its own stdout. The watcher exits immediately when that command is null, and it does not read `CAPTURE_AGENT_HANDOFF`. That variable is what `runBeat()` checks before it hands a report off itself.
+
+```bash
+node watch.js --watch-dir ./failures -- node your-walkthrough.js
+```
+
+`FAILURE-*.json` is written by `captureFailure()` in `lib/beat-runner.js`, into the `failDir` you pass to `runBeat()`. The default watch directory is the repo root. `run-modules.js` never calls `runBeat()`, so wrapping a module run polls for reports the module runner does not write. A redaction failure from `safeShot()` is a thrown error and a non-zero exit, not a `FAILURE-*.json`.
+
+The child process is started with `CAPTURE_READONLY=1` and `CAPTURE_NO_SUBMIT=1`, so the guard stays on even if the parent shell allowed writes. `--rerun` passes `allowRerun` into the handoff. Leave it off while a capture session is still authenticated against the same environment. The agent's CLI exit code is recorded as `exitedCleanly`. That is the subprocess, not a repaired beat. The agent can edit the repo through whatever CLI you configured. Read the diff. `watch.js` exits with the wrapped command's code, unless a poll could not read the watch directory, in which case it exits `1`.
+
+`node scripts/synthetic-phi.js [count]` prints an HTML table of invented member rows (default 5). It is a local fixture. The smoke test does not load it. The Social Security field it emits is already masked (`***-**-####`), and the phone numbers are not 10 digits, so a redaction hit on this table is not evidence that those two `valuePatterns` matched.
 
 ## Configuration
 
-Everything environment-specific lives in `capture.config.json`. Nothing is hardcoded in
-`lib/`. The blocks are:
+Environment-specific values live in `capture.config.json`. Credentials do not.
 
 | Block | What it holds |
-|---|---|
-| `environments` | named hosts, so scripts never embed a URL |
-| `app` | login path, service path, field selectors, loading-overlay text, mask class fragments |
-| `viewport`, `capture` | window size, output directory, crop box |
-| `redaction` | the identity badge prefix, column labels, label patterns, value regexes, and `requireBoxes` |
-| `guard` | the forbidden control labels |
-| `navigation` | the shell's menu labels, tab strip geometry, and named `A > B > C` routes |
-| `resolvers` | the resolution cascade order, Tesseract paths, template directory, optional vision command |
-| `referenceLookup` | optional command run when a target cannot be resolved |
-| `agentHandoff` | optional coding-agent CLI handed a failure report for diagnosis |
-| `annotate` | mark-up colours, stroke width, font family and size, focus blur strength |
+| --- | --- |
+| `environments` | Named hosts. Scripts take `--env`. |
+| `app` | Login path, service path, field selectors, loading-overlay text, mask class fragments, `authPathFragment`. |
+| `viewport`, `capture` | Window size, output directory, default crop. Shipped viewport is 1440 by 900. Shipped crop is `{ "left": 0, "top": 56, "width": 1440, "height": 844 }`. |
+| `redaction` | `identityPrefix`, `columnLabels`, `labelPatterns`, `valuePatterns`, `requireBoxes`. |
+| `guard` | `forbiddenTerms`. |
+| `navigation` | Menu labels, `adminMenuItemPixel`, `adminPostCondition`, `tabBarY`, tab labels, named routes. |
+| `resolvers` | Cascade order. Shipped tiers are `dom`, `ocr`, `template`. Tesseract candidate paths. Template directory. Optional vision command. |
+| `referenceLookup` | Optional command run before a hard stop. The term is appended to `args` unless an arg contains `{term}`. |
+| `agentHandoff` | Optional CLI that receives a failure report. Placeholders: `{root}`, `{out}`, `{image}`, `{report}`. |
+| `annotate` | Mark-up colours, stroke, font, `blurSigma`. |
 
-Credentials never go in this file.
+`resolvers.vision.command` ships as `null`, and `vlm` is not in the shipped `tiers` list. Setting a command and adding `vlm` to `tiers` sends a screenshot to that command. Leave both as shipped and no capture is uploaded.
+
+`resolvers.templateDir` is `assets/templates`. No crops ship with the kit. A template crop is a screenshot of your application, and that directory is gitignored. `TESSERACT_BIN` is checked before `resolvers.tesseractCandidates`. Tesseract is often installed off `PATH`.
 
 ### Environment variables
 
-Nine, and this is all of them:
-
 | Variable | Effect |
-|---|---|
-| `CAPTURE_USER`, `CAPTURE_PASS` | credentials. Both must be set to be used. Preferred over `--user`/`--pass`, which are visible in the process list |
-| `CAPTURE_CONFIG` | path to a config file other than `capture.config.json` |
-| `CAPTURE_ALLOW_WRITES=1` | **disarms the read-only click guard.** Nothing else does |
-| `CAPTURE_READONLY=1`, `CAPTURE_NO_SUBMIT=1` | force the guard on, overriding `CAPTURE_ALLOW_WRITES` |
-| `CAPTURE_REFERENCE_STOP=1` | on an unresolvable target, run the configured `referenceLookup` command and hard-stop instead of continuing |
-| `CAPTURE_AGENT_HANDOFF=1` | hand a beat's failure report to the configured `agentHandoff` CLI for diagnosis |
-| `CAPTURE_AGENT_RERUN=1` | additionally let that agent launch its own run. Off by default because the capture browser is still open and authenticated when the handoff fires |
-| `TESSERACT_BIN` | path to the Tesseract binary, checked before `resolvers.tesseractCandidates` |
-
-The guard is armed unless you set `CAPTURE_ALLOW_WRITES=1`. That default matters more than
-it looks: the protection was originally opt-in, which meant it was absent in exactly the
-case it was written for, someone running the kit for the first time against a shared
-environment without having read `lib/guard.js`. Forgetting a variable should cost you a
-blocked click, not a saved record.
-
-`CAPTURE_READONLY` and `CAPTURE_NO_SUBMIT` are redundant with the default and kept because
-six entry points set them deliberately. They win over `CAPTURE_ALLOW_WRITES` rather than
-losing to it, so exporting the override in a shell for one purpose cannot silently disarm a
-script that asked to be read-only.
-
-## How a control gets clicked
-
-`lib/nav.js` is built on a measured benchmark rather than on preference, and
-`scripts/bench-interaction.js` is the benchmark. It runs four targets of increasing
-difficulty (a unique tab label, an ambiguous label that appears in two places, an
-async-loaded grid section, and a genuinely fixed-position control) against each applicable
-click strategy under both wait strategies. Four targets times two waits is eight trials per
-strategy, which is where the denominator below comes from:
-
-| Strategy | Verified | Note |
-|---|---|---|
-| `element.click()` inside `page.evaluate` | **0 of 8** | not flaky. It never works |
-| `page.locator('text=...')` | 100% of correctly-specified targets | most layout-robust |
-| `page.mouse.click` on DOM-center coords | 100% of correctly-specified targets | needed when a label repeats |
-| fixed pixel coordinates | reliable only for a genuinely fixed target | a coin flip everywhere else |
-
-The zero is the useful result. SmartClient runs its own event manager and reacts only to
-**trusted** input events. A synthetic DOM click is not trusted, so the framework never sees
-it. Playwright's mouse API dispatches through CDP, which the browser marks trusted, which
-is the only reason the coordinate paths work.
-
-On waiting: polling `isc.Page.isLoaded()` was as reliable as a blind `waitForTimeout` and
-about four times faster, 1.7 seconds per step against 7.1. Those two numbers are from one
-run against one application, and the run output is not in the repo (`bench-results.json` is
-gitignored, because it names screens). The ratio is the part worth trusting, and it follows
-from how the two waits are built: the fixed wait is a hardcoded 6 s (`waitFixed`, default
-`ms = 6000`) plus overlay dismissal, so it cannot go faster than 6 s no matter how quickly
-the page settles, while the signal wait returns as soon as `isc.Page.isLoaded()` is true.
-Re-measure on your own application with `node scripts/bench-interaction.js --env <name>`
-rather than taking these figures as a specification.
-
-So the canonical order is locator, then a positionally-banded DOM-center mouse click, then
-the visual cascade. A band (`ymin`/`ymax`) is what disambiguates a label that appears twice,
-and a locator cannot express one.
-
-## Finding a grid row
-
-Worth its own section because it was the largest single source of wrong captures. SmartClient
-renders grids into generic divs with volatile ids **and virtualizes the rows**, so the row
-you want may not be in the DOM at all until it is scrolled into view. Indexing rows by
-on-screen position is therefore meaningless, and DOM sweeps, OCR and vision all miss.
-
-`lib/isc.js` resolves a row by matching a field value against the grid widget's own backing
-data, calls `scrollRecordIntoView()`, then asks the widget for its real page rect. No
-coordinate guessing and no dependence on which rows happen to be painted.
-
-## What the redactor is not
-
-It is not a compliance control and it does not implement any named de-identification
-standard. It covers exactly what you declare in the `redaction` block: the operator badge,
-leaf text matching your `valuePatterns`, and values adjacent to labels or under grid columns
-you name in `labelPatterns` and `columnLabels`.
-
-The shipped patterns match US Social Security numbers, 10-digit phone and fax numbers, email
-addresses, numeric dates, IPv4 addresses, URLs, and uppercase alphanumeric identifiers of
-seven characters or more. That list reflects one application's screens. **Read it and change
-it before you trust it on yours.**
-
-`requireBoxes` is the safety net worth understanding: set it to the minimum number of
-regions a capture must find and verify, and a capture that finds fewer aborts instead of
-writing a file. A redactor that silently finds nothing is indistinguishable from a screen
-with nothing to redact, and only one of those is safe.
-
-## Redaction fails closed
-
-There are eight places where a capture is abandoned rather than written: seven in
-`lib/redact.js` and one in `lib/capture-safe.js`. Each throws `RedactionError`, and none of
-them writes a PNG first.
-
-| Condition | Why it is fatal |
 | --- | --- |
-| The captured region's size cannot be determined | Overlay bounds cannot be checked against anything |
-| A region to cover lies entirely outside the capture | It would be absent from the image with no visible sign |
-| A region extends past the capture and would be partly covered | A partly covered value is a legible value |
-| Fewer regions were found than `requireBoxes` | The discovery selectors may have stopped matching this screen |
-| Overlays did not attach in the DOM | The cover exists in the plan and not on the page |
-| Overlays vanished between attaching and the shot | The application re-rendered mid-capture, so the image is not the page that was verified |
-| The configured crop does not fit the capture | Cropping is geometry, not redaction, and a bad crop shifts every box |
-| A configured column is visible but none of its values could be located | Indistinguishable from a screen with no such column, which is the case that produces a clean-looking unredacted capture |
+| `CAPTURE_USER`, `CAPTURE_PASS` | Credentials. Both have to be set. Used when `--user` and `--pass` were not both passed. |
+| `CAPTURE_CONFIG` | Config file other than `capture.config.json`. |
+| `CAPTURE_ALLOW_WRITES=1` | Disarms the click guard. |
+| `CAPTURE_READONLY=1`, `CAPTURE_NO_SUBMIT=1` | Force the guard on. Either one wins over `CAPTURE_ALLOW_WRITES`. |
+| `CAPTURE_REFERENCE_STOP=1` | After every resolver tier misses, run `referenceLookup` if configured, write `UNKNOWN-*.json`, and throw. |
+| `CAPTURE_AGENT_HANDOFF=1` | `runBeat()` hands its failure report to `agentHandoff`. `watch.js` does not read this variable. |
+| `CAPTURE_AGENT_RERUN=1` | Let that agent launch its own run. |
+| `TESSERACT_BIN` | Tesseract binary. |
 
-The last one is the interesting failure. `scripts/smoke-test.js` covers it directly: it
-builds a page with a `redaction.columnLabels` header and no values beneath it, asserts
-`safeShot()` throws, and asserts that **no file exists afterwards**. Delete the check in
-`capture-safe.js` and the smoke test goes red, which is the only reason to trust the
-paragraph above.
+The guard is armed when `CAPTURE_ALLOW_WRITES` is unset. It used to be opt-in through `CAPTURE_READONLY`, which left it off on a first run against a shared environment. `CAPTURE_READONLY` and `CAPTURE_NO_SUBMIT` remain because `setup.js`, the smoke test, `scripts/probe-isc-state.js`, `scripts/bench-interaction.js`, and the child processes in `lib/agent-handoff.js` and `lib/resolvers.js` set them on purpose. They used to lose to a parent `CAPTURE_ALLOW_WRITES=1`, so a child that had asked to be read-only ran with the guard off.
 
-`allowUnredacted: true` is the deliberate override for a screen that genuinely has nothing
-to cover. It is a per-call argument rather than a config key or an environment variable so
-that turning it on is visible in the script that did it.
+## What is checked
 
-## Limitations
+`scripts/smoke-test.js` is the test. CI runs it and nothing else.
 
-- **Isomorphic SmartClient specific.** `lib/isc.js` and `lib/isc-nav.js` talk to
-  `window.isc` directly. Against any other framework they are dead weight, though the
-  guard, the redactor and `capture-safe.js` are framework-agnostic.
-- **Chromium only.** The CDP trusted-input path and the redaction verification assume it.
-- **The `navigation` geometry is per-shell.** `tabBarY` and `adminMenuItemPixel` are
-  measured pixel values for one application's chrome. They are config keys rather than
-  constants for that reason, but they still have to be measured.
-- **The redactor depends on an authoring convention.** It identifies a field's value by
-  adjacency to its label, and a grid value by the column it sits under. An unusual layout
-  defeats it, which is what `requireBoxes` is there to catch.
-- **English label vocabulary** in the shipped `guard.forbiddenTerms` and redaction lists.
-- **The OCR and template tiers need setup you must do.** Tesseract is frequently installed
-  without being on `PATH`, hence `tesseractCandidates`. No template crops ship with the
-  kit, because template crops are screenshots of your application.
-- **The vision tier sends an image to whatever you configure.** It is `null` by default and
-  absent from the default `tiers` list. Leaving it that way guarantees no capture leaves the
-  machine. Turning it on is a decision about where your screenshots go.
-- **The guard matches control labels, not intent.** It blocks a button reading "Save". It
-  cannot block a keyboard shortcut, a form that submits on Enter, or a button labelled
-  something the list does not name. It reduces the risk of mutating a shared environment;
-  it does not remove it. Capture against a non-production environment.
+`.github/workflows/ci.yml` runs on push and pull request to `main` and `master`, and on `workflow_dispatch`. The `smoke` job uses `ubuntu-latest`, `windows-latest`, and `macos-latest`, Node 20, `npm ci`, `npx playwright install chromium`, and `npm run smoke`.
 
-## Justinbot Terminology Glossary
+There is no second test runner and no coverage figure in the repo. The click-strategy timings in `lib/nav.js` are not part of this test. The diff assertions below use values computed from the images the test creates (a 20 by 20 square is 400 pixels of a 200 by 150 image, which is 1.33%; the grown page is 42.86%), not numbers recorded from an earlier run of the code under test.
 
-For test automation engineers and producers exploring enterprise UI capture:
+The test asserts:
 
-| Term | Web Automation / Testing Context | Definition in `smartclient-capture-kit` |
-|---|---|---|
-| **SmartClient** | Enterprise RIA framework | Isomorphic JavaScript UI component framework that renders complex desktop-style windows, trees, and grids into custom DOM structures. |
-| **Click Mask** | Modal event interception | An invisible blocking layer drawn over the DOM by SmartClient when modal dialogs appear, absorbing mouse events as silent no-ops. |
-| **Virtualized Grid DOM** | DOM performance optimization | Only rendering table rows currently visible within the scrollport, unmounting offscreen rows so traditional CSS locators fail. |
-| **Fail-Closed Redaction** | Security / PII protection | Halting execution and refusing to write image files whenever an expected PII box or column cannot be positively identified and shielded. |
-| **Pre-Shutter Overlays** | Zero-leak screen redaction | Injecting opaque black DOM elements directly over sensitive values and verifying paint completion before the screenshot rasterizes. |
-| **Read-Only Mutation Guard** | Data corruption prevention | Event listener running in the browser capturing phase that cancels mutating clicks (Save, Submit, Delete) before application handlers run. |
-| **Chrome DevTools Protocol (CDP)** | Low-level browser driver | Direct protocol communication with Chromium allowing trusted hardware-level input synthesis and accurate bounding rect measurement. |
-| **Post-Crop Geometry** | Coordinate calculation | Measuring callout pins and highlight rectangles relative to the cropped output canvas rather than the raw viewport. |
-| **Visual Regression Diffing** | Screenshot comparison | Pixel-by-pixel image differencing highlighting changed UI components between release versions. |
+- Identical images differ by 0. The 400-pixel square is reported as 1.33%, and the pair is not marked padded.
+- The 300 by 200 against 300 by 350 pair is 42.86% and is marked padded.
+- A corrupt file, a zero-byte file, and a missing file throw `DiffError`. In a directory compare, that pair is a failure and is absent from the unchanged list. Changed, unchanged, and failed counts add up to the number of pairs. Names only on one side come back as `onlyInA` and `onlyInB`.
+- A highlight's ink lands on the rectangle it was given, within 3 pixels, measured by differencing against the unmarked image.
+- A callout at `y=10` on a 300-pixel-tall image extends below that point. The same callout at `y=200` sits above it. Callouts at `x=2` and at `x=398` keep their ink inside the frame, and each draws at least 85% of the ink of the centred callout.
+- A highlight, arrow, callout, focus box, or crop that falls outside the image throws `AnnotateError`, and the output path is not created. Annotating a file onto itself throws.
+- `--focus` leaves the pixels inside the focus box byte-identical to the source, and changes more than half of the pixels in the 400 by 300 fixture.
+- `parseCallout('12,34,Save, then close')` keeps the comma inside the text.
+- The width estimate treats `WWWW` as more than twice `iiii` at the same size, and scales a word up with the font size.
+- Chromium launches. Connecting over CDP returns a context.
+- With the guard installed, a click on Save leaves that button's counter at 0, a click on View increments, and the blocked click is recorded on `window.__captureBlocked`.
+- `redact()` finds at least two regions on a fixture that contains `Member Name: Example Person`, `ID:operator`, and `01/02/2026`, and writes a non-empty PNG.
+- `safeShot()` covers the first `redaction.columnLabels` header when a value sits under it, and refuses the header-only page without writing a file.
 
-## Background
+## Limits
 
-Built while running documentation for a healthcare SaaS platform, where it captured
-release screenshots against shared non-production environments containing realistic data.
-The three failure modes in "Why this exists" are all things that actually happened, and
-most of the odd-looking defensiveness in this codebase is a specific scar.
+- **Navigation is SmartClient-specific.** `lib/isc.js` and `lib/isc-nav.js` call `window.isc`. The guard, the redactor, `safeShot()`, diff, and annotate run on the plain page the smoke test builds.
+- **Chromium only.** Trusted input and the overlay check assume it.
+- **Shell geometry is per application.** `navigation.tabBarY` (shipped as `95`) and `navigation.adminMenuItemPixel` (shipped as `[1090, 97]`) are measurements of one chrome. They are config so they are not constants in `lib/`. They still have to be measured on yours. `modules/admin.js` finds tabs with its own band, `y` greater than 78 and less than 100, separate from `tabBarY`.
+- **Redaction follows one layout.** A field value is the leaf to the right of its label. A grid value is the cell under its header. Column matching in `findLabeledColumnValueBoxes()` stays inside the header's `.listGrid` when the header has one. A layout that breaks that defeats discovery. `requireBoxes` is what turns "found nothing" into a failed run.
+- **The shipped vocabularies are English,** in `guard.forbiddenTerms` and the redaction lists.
+- **The guard matches a label, on pointer and mouse events.** It inspects the clicked element and up to four ancestors, and it trusts `innerText` only when the element is under 260 by 80 CSS pixels, so the word Save inside a large panel does not block the panel. A keyboard shortcut, a form that submits on Enter, and a label the list omits all reach the application. Capture against a non-production environment.
+- **OCR and templates need your setup.** See Configuration. The vision tier uploads a screenshot once you enable it.
+- **Saved sessions are credentials.** `.auth/` and `storageState*.json` hold live cookies. Both are gitignored. Deleting the file later leaves it in git history. Revoke the session if one was ever committed.
+- **`diff-runs.js` counts pixels.** The HTML page uses the same counts and a stronger label.
+
+## Where this came from
+
+Built while running documentation for a healthcare SaaS platform. Captures ran against shared non-production environments that held realistic data. The comments in `lib/isc.js`, `lib/reference-stop.js`, `lib/guard.js`, `lib/redact.js`, and `lib/nav.js` describe the failures above as ones that had already happened: a click the framework never received, a run that continued onto the wrong screen, a PNG written when the cover had not been verified. The checks in this repo are each tied to one of those outcomes.
 
 ## License
 
