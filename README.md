@@ -1,5 +1,9 @@
 # smartclient-capture-kit
 
+![Demo of a real safeShot against a fictional roster: the terminal run, the page with fake member data, the redacted capture, and a refusal when the cover cannot be verified.](docs/media/demo.gif)
+
+The GIF is a real run of [scripts/demo-capture.js](scripts/demo-capture.js). [fixtures/demo-member-roster.html](fixtures/demo-member-roster.html) is made-up member data. [fixtures/demo-cover-unverifiable.html](fixtures/demo-cover-unverifiable.html) forces the cover to opacity 0, and the kit refuses to save. Regenerate it with `scripts/record-demo.sh` (asciinema, agg, and ffmpeg).
+
 Playwright screenshot capture with fail-closed PHI redaction.
 
 It is for the writer producing the UI figures for a release of an Isomorphic SmartClient application, against an environment other people are using, where the screens contain data that must not be published.
