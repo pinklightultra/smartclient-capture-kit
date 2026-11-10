@@ -2,7 +2,7 @@
 
 `scripts/smoke-test.js` is the smoke test. CI runs it and nothing else.
 
-`.github/workflows/ci.yml` runs on push and pull request to `main` and `master`, and on `workflow_dispatch`. The `smoke` job uses `ubuntu-latest`, `windows-latest`, and `macos-latest`, Node 20, `npm ci`, `npx playwright install chromium`, and `npm run smoke`.
+`.github/workflows/ci.yml` runs on push and pull request to `main` and `master`, and on `workflow_dispatch`. The `smoke` job uses `ubuntu-24.04`, `windows-latest`, and `macos-latest`, Node 20, `npm ci`, `npx playwright install chromium`, and `npm run smoke`.
 
 There is no second test runner and no coverage figure in the repo. The click-strategy timings in `lib/nav.js` are not part of this smoke test. The diff assertions below use values computed from the images the test creates (a 20 by 20 square is 400 pixels of a 200 by 150 image, which is 1.33%; the grown page is 42.86%), not numbers recorded from an earlier run of the code under test.
 
